@@ -1,0 +1,57 @@
+name: Fork Windows ARM64 gnullvm smoke
+
+on:
+  push:
+    branches: [windows-arm64-gnullvm-smoke]
+
+jobs:
+  build:
+    runs-on: windows-11-arm
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Install Windows ARM64 GNU-family toolchain
+      if: true
+      id: msys2
+      uses: msys2/setup-msys2@v2
+      with:
+        msystem: CLANGARM64
+        update: true
+        install: mingw-w64-clang-aarch64-clang
+
+    - name: Use Windows ARM64 GNU-family toolchain
+      if: true
+      shell: pwsh
+      env:
+        MSYS2_LOCATION: ${{ steps.msys2.outputs.msys2-location }}
+      run: |
+        $bin = "$env:MSYS2_LOCATION\clangarm64\bin"
+        echo $bin >> $env:GITHUB_PATH
+        echo "CARGO_TARGET_AARCH64_PC_WINDOWS_GNULLVM_LINKER=$bin\clang.exe" >> $env:GITHUB_ENV
+        # PCRE2 is C, so cc-rs needs the same clang.
+        echo "CC_aarch64_pc_windows_gnullvm=$bin\clang.exe" >> $env:GITHUB_ENV
+        echo "AR_aarch64_pc_windows_gnullvm=$bin\llvm-ar.exe" >> $env:GITHUB_ENV
+        # Link libunwind statically so the release does not need MSYS2's libunwind.dll.
+        echo "CARGO_TARGET_AARCH64_PC_WINDOWS_GNULLVM_RUSTFLAGS=-C target-feature=+crt-static" >> $env:GITHUB_ENV
+
+    - name: Install Rust
+      uses: dtolnay/rust-toolchain@master
+      with:
+        toolchain: nightly
+        target: aarch64-pc-windows-gnullvm
+
+    - name: Build release binary (same command as release.yml)
+      shell: bash
+      run: cargo build --verbose --profile release-lto --features pcre2 --target aarch64-pc-windows-gnullvm
+
+    - name: Check the binary runs without MSYS2
+      shell: pwsh
+      run: |
+        $exe = "target/aarch64-pc-windows-gnullvm/release-lto/rg.exe"
+        llvm-readobj --coff-imports $exe | Select-String 'Name: ' | Sort-Object -Unique
+        $env:PATH = "$env:SystemRoot\System32;$env:SystemRoot"
+        & $exe --version
+        if ($LASTEXITCODE -ne 0) { throw "rg.exe failed to start without MSYS2 on PATH" }
+        "needle in a haystack" | & $exe -P 'need(?=le)'
+        if ($LASTEXITCODE -ne 0) { throw "PCRE2 search failed" }
