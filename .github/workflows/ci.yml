@@ -4,6 +4,7 @@ on:
   push:
     branches:
     - master
+    - windows-arm64-gnullvm-smoke
   schedule:
   - cron: '00 01 * * *'
 
